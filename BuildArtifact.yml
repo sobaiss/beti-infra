@@ -1,0 +1,402 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: The ArrowSphere Infra Project
+Parameters:
+  AccountAlias:
+    Type: String
+    Description: The Account Alias
+  ProjectName:
+    Type: String
+    Default: beti-infra
+  Stage:
+    Type: String
+    Description: The stage name
+    AllowedPattern: ^[a-zA-Z0-9]+(-[a-z]{2})?$
+    AllowedValues:
+    - dev
+    - test
+    - prod
+  DataName:
+    Type: String
+    Description: Dataset name
+    AllowedValues:
+    - dev
+    - test
+    - prod
+  VPCCIDR:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: CIDR block for the VPC.
+  PublicSubnetCIDR:
+    Type: String
+    Default: 10.0.1.0/24
+    Description: CIDR block for the Public Subnet.
+  PrivateSubnetCIDR:
+    Type: String
+    Default: 10.0.2.0/24
+    Description: CIDR block for the Private Subnet.
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock:
+        Ref: VPCCIDR
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-VPC
+    Metadata:
+      SamResourceId: VPC
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-IGW
+    Metadata:
+      SamResourceId: InternetGateway
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId:
+        Ref: VPC
+      InternetGatewayId:
+        Ref: InternetGateway
+    Metadata:
+      SamResourceId: AttachGateway
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-PublicRouteTable
+    Metadata:
+      SamResourceId: PublicRouteTable
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId:
+        Ref: PublicRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId:
+        Ref: InternetGateway
+    Metadata:
+      SamResourceId: DefaultPublicRoute
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-PrivateRouteTable
+    Metadata:
+      SamResourceId: PrivateRouteTable
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      CidrBlock:
+        Ref: PublicSubnetCIDR
+      MapPublicIpOnLaunch: 'true'
+      AvailabilityZone:
+        Fn::Sub: ${AWS::Region}a
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-PublicSubnet
+    Metadata:
+      SamResourceId: PublicSubnet
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      CidrBlock:
+        Ref: PrivateSubnetCIDR
+      AvailabilityZone:
+        Fn::Sub: ${AWS::Region}a
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-PrivateSubnet
+    Metadata:
+      SamResourceId: PrivateSubnet
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: PublicSubnet
+      RouteTableId:
+        Ref: PublicRouteTable
+    Metadata:
+      SamResourceId: PublicSubnetRouteTableAssociation
+  PrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: PrivateSubnet
+      RouteTableId:
+        Ref: PrivateRouteTable
+    Metadata:
+      SamResourceId: PrivateSubnetRouteTableAssociation
+  DefaultSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allows SSH from Public and All traffic from VPC internal
+      VpcId:
+        Ref: VPC
+      SecurityGroupIngress:
+      - IpProtocol: -1
+        CidrIp:
+          Ref: VPCCIDR
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: '0.0.0.0/0'
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-DefaultSG
+    Metadata:
+      SamResourceId: DefaultSecurityGroup
+  DefaultNACL:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-DefaultNACL
+    Metadata:
+      SamResourceId: DefaultNACL
+  PublicSubnetNACLAssociation:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId:
+        Ref: PublicSubnet
+      NetworkAclId:
+        Ref: DefaultNACL
+    Metadata:
+      SamResourceId: PublicSubnetNACLAssociation
+  PrivateSubnetNACLAssociation:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId:
+        Ref: PrivateSubnet
+      NetworkAclId:
+        Ref: DefaultNACL
+    Metadata:
+      SamResourceId: PrivateSubnetNACLAssociation
+  NACLInboundRule:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId:
+        Ref: DefaultNACL
+      RuleNumber: 100
+      Protocol: -1
+      RuleAction: allow
+      CidrBlock:
+        Ref: VPCCIDR
+      Egress: 'false'
+    Metadata:
+      SamResourceId: NACLInboundRule
+  NACLOutboundRule:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId:
+        Ref: DefaultNACL
+      RuleNumber: 100
+      Protocol: -1
+      RuleAction: allow
+      CidrBlock: '0.0.0.0/0'
+      Egress: 'true'
+    Metadata:
+      SamResourceId: NACLOutboundRule
+  LocationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName:
+        Fn::Sub: locations-${DataName}
+      AttributeDefinitions:
+      - AttributeName: pk
+        AttributeType: S
+      - AttributeName: sk
+        AttributeType: S
+      - AttributeName: divisionName
+        AttributeType: S
+      - AttributeName: name
+        AttributeType: S
+      KeySchema:
+      - AttributeName: pk
+        KeyType: HASH
+      - AttributeName: sk
+        KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+      GlobalSecondaryIndexes:
+      - IndexName: divisionName-name-index
+        KeySchema:
+        - AttributeName: divisionName
+          KeyType: HASH
+        - AttributeName: name
+          KeyType: RANGE
+        Projection:
+          ProjectionType: ALL
+    Metadata:
+      SamResourceId: LocationsTable
+  PublicBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Suspended
+      BucketName:
+        Fn::Sub: ${ProjectName}-${DataName}-public-bucket
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${ProjectName}-${DataName}-public-bucket
+      - Key: Project
+        Value:
+          Ref: ProjectName
+    Metadata:
+      SamResourceId: PublicBucket
+  TempBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Suspended
+      BucketName:
+        Fn::Sub: ${ProjectName}-${DataName}-temp-bucket
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${AWS::StackName}-${DataName}-temp-bucket
+      - Key: Project
+        Value:
+          Ref: ProjectName
+    Metadata:
+      SamResourceId: TempBucket
+  ReadAndWriteBucketPublicPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Action:
+          - s3:ListBucket
+          - s3:ListObjects
+          - s3:ListObjectsV2
+          - s3:HeadObject
+          - s3:GetObject
+          - s3:PutObject
+          - s3:DeleteObject
+          - s3:DeleteObjectVersion
+          Effect: Allow
+          Resource:
+          - Fn::Sub: arn:aws:s3:::${ProjectName}-${DataName}-public-bucket/*
+          - Fn::Sub: arn:aws:s3:::${ProjectName}-${DataName}-public-bucket
+          - Fn::Sub: arn:aws:s3:::${ProjectName}-${DataName}-temp-bucket/*
+          - Fn::Sub: arn:aws:s3:::${ProjectName}-${DataName}-temp-bucket
+    Metadata:
+      SamResourceId: ReadAndWriteBucketPublicPolicy
+  ReadBucketPublicPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Action:
+          - s3:GetObject
+          Effect: Allow
+          Resource:
+          - Fn::Sub: arn:aws:s3:::${ProjectName}-${DataName}-PublicBucket/*
+          - Fn::Sub: arn:aws:s3:::${ProjectName}-${DataName}-TempBucket/*
+    Metadata:
+      SamResourceId: ReadBucketPublicPolicy
+Outputs:
+  VPCId:
+    Description: VPC ID
+    Value:
+      Ref: VPC
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-vpc-${DataName}
+  PublicSubnetId:
+    Description: Public Subnet ID
+    Value:
+      Ref: PublicSubnet
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-vpc-subnet-public-${DataName}
+  PrivateSubnetId:
+    Description: Private Subnet ID
+    Value:
+      Ref: PrivateSubnet
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-vpc-subnet-private-${DataName}
+  DefaultSecurityGroupId:
+    Description: Default Security Group ID
+    Value:
+      Ref: DefaultSecurityGroup
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-sg-default-${DataName}
+  LocationsTable:
+    Description: Locations DynamoDB Table
+    Value:
+      Ref: LocationsTable
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-dynamodb-locations-${DataName}
+  PublicBucketName:
+    Description: S3 Public Bucket Name
+    Value:
+      Fn::Sub: ${ProjectName}-${DataName}-public-bucket
+    Export:
+      Name:
+        Fn::Sub: ${ProjectName}-${DataName}-public-bucket
+  TempBucketName:
+    Description: S3 Temp Bucket Name
+    Value:
+      Fn::Sub: ${ProjectName}-${DataName}-temp-bucket
+    Export:
+      Name:
+        Fn::Sub: ${ProjectName}-${DataName}-temp-bucket
+  ReadAndWriteBucketPublicPolicy:
+    Description: IAM Managed Policy for Read and Write Access to S3 Buckets
+    Value:
+      Ref: ReadAndWriteBucketPublicPolicy
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-policy-read-write-buckets-${DataName}
+  ReadBucketPublicPolicy:
+    Description: IAM Managed Policy for Read Access to S3 Buckets
+    Value:
+      Ref: ReadBucketPublicPolicy
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-policy-read-buckets-${DataName}
